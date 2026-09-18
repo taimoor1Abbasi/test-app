@@ -4,9 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "node  --watch index.js"
+    "dev": "nodemon src/index.js"
   },
   "keywords": [],
+  "type": "module",
   "author": "",
   "license": "ISC",
   "dependencies": {
