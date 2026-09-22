@@ -29,7 +29,25 @@ function App() {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+  const [selectedImage, setSelectedImage] = useState(null)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const imageInputRef = useRef(null)
+  const avatarInputRef = useRef(null)
   const messagesEndRef = useRef(null)
+
+  const getInitials = (name = '') => name
+    .split(' ')
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+
+  const renderAvatar = (user, className, fallbackColor) => (
+    <div className={className} style={{ background: user?.avatarUrl ? '#e2e8f0' : fallbackColor }}>
+      {user?.avatarUrl ? <img src={user.avatarUrl} alt={`${user.name || 'User'} profile`} /> : getInitials(user?.name)}
+    </div>
+  )
 
   // 1. Fetch current user and conversations on mount
   useEffect(() => {
@@ -87,12 +105,7 @@ function App() {
     const title = isDirect ? (otherParticipant?.name || 'Direct Chat') : 'Team Sync'
     const subtitle = isDirect ? (otherParticipant?.email || 'Direct message') : `${conv.participants?.length || 0} members`
     const accent = getAccentColor(conv._id)
-    const initials = title
-      .split(' ')
-      .map((part) => part[0])
-      .slice(0, 2)
-      .join('')
-      .toUpperCase()
+    const initials = getInitials(title)
 
     const preview = conv.lastMessageId?.text || 'No messages yet'
     const time = conv.lastMessageAt ? formatMessageTime(conv.lastMessageAt) : ''
@@ -113,13 +126,61 @@ function App() {
   })
 
   // 3. Handle sending new message
+  const handleImageSelected = (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setUploadError('')
+    setSelectedImage(file)
+    event.target.value = ''
+  }
+
+  const uploadImage = async (file, fieldName) => {
+    const formData = new FormData()
+    formData.append(fieldName, file)
+    const res = await fetch(`${API_BASE}/upload`, { method: 'POST', body: formData })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Image upload failed')
+    return data.url
+  }
+
+  const handleAvatarSelected = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file || !currentUser) return
+    setUploadingAvatar(true)
+    setUploadError('')
+    try {
+      const avatarUrl = await uploadImage(file, 'image')
+      const res = await fetch(`${API_BASE}/users/${currentUser._id}/avatar`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ avatarUrl }),
+      })
+      const updatedUser = await res.json()
+      if (!res.ok) throw new Error(updatedUser.error || 'Profile picture update failed')
+      setCurrentUser(updatedUser)
+      setConversations((prev) => prev.map((conversation) => ({
+        ...conversation,
+        participants: conversation.participants?.map((participant) => participant._id === updatedUser._id
+          ? { ...participant, avatarUrl: updatedUser.avatarUrl }
+          : participant),
+      })))
+    } catch (err) {
+      setUploadError(err.message)
+    } finally {
+      setUploadingAvatar(false)
+      event.target.value = ''
+    }
+  }
+
   const handleSend = async (event) => {
     event.preventDefault()
     const trimmedMessage = draft.trim()
-    if (!trimmedMessage || !activeId || !currentUser) return
+    if ((!trimmedMessage && !selectedImage) || !activeId || !currentUser) return
 
     setSending(true)
+    setUploadError('')
     try {
+      const attachments = selectedImage ? [await uploadImage(selectedImage, 'image')] : []
       const res = await fetch(`${API_BASE}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -127,6 +188,7 @@ function App() {
           conversationId: activeId,
           senderId: currentUser._id,
           text: trimmedMessage,
+          attachments,
         }),
       })
 
@@ -134,6 +196,7 @@ function App() {
         const savedMessage = await res.json()
         setMessages((prev) => [...prev, savedMessage])
         setDraft('')
+        setSelectedImage(null)
 
         // Update preview in conversation list
         setConversations((prev) =>
@@ -149,6 +212,7 @@ function App() {
         )
       }
     } catch (err) {
+      setUploadError(err.message)
       console.error('Error sending message:', err)
     } finally {
       setSending(false)
@@ -169,14 +233,10 @@ function App() {
 
           {currentUser && (
             <div className="current-user-card">
-              <div className="current-user-avatar">
-                {currentUser.name
-                  ?.split(' ')
-                  .map((p) => p[0])
-                  .slice(0, 2)
-                  .join('')
-                  .toUpperCase()}
-              </div>
+              <button type="button" className="avatar-button" onClick={() => avatarInputRef.current?.click()} title="Change profile picture">
+                {renderAvatar(currentUser, 'current-user-avatar', '#4f46e5')}
+              </button>
+              <input ref={avatarInputRef} className="visually-hidden" type="file" accept="image/*" onChange={handleAvatarSelected} />
               <div className="current-user-info">
                 <p className="current-user-name">
                   <span>{currentUser.name}</span>
@@ -216,9 +276,7 @@ function App() {
                       className={`conversation-item ${isActive ? 'active' : ''}`}
                       onClick={() => setActiveId(conversation._id)}
                     >
-                      <div className="avatar" style={{ background: meta.accent }}>
-                        {meta.initials}
-                      </div>
+                      {renderAvatar(meta.otherParticipant, 'avatar', meta.accent)}
                       <div className="conversation-copy">
                         <div className="meta-row">
                           <strong>{meta.title}</strong>
@@ -240,9 +298,7 @@ function App() {
             <>
               <header className="chat-header">
                 <div className="user-summary">
-                  <div className="avatar large" style={{ background: activeMeta.accent }}>
-                    {activeMeta.initials}
-                  </div>
+                  {renderAvatar(activeMeta.otherParticipant, 'avatar large', activeMeta.accent)}
                   <div>
                     <h3>{activeMeta.title}</h3>
                     <p>
@@ -265,9 +321,13 @@ function App() {
 
                   return (
                     <div key={message._id} className={`message-row ${isMine ? 'mine' : ''}`}>
+                      {!isMine && renderAvatar(message.senderId, 'message-avatar', getAccentColor(senderId))}
                       <div className="message-bubble">
                         {!isMine && <span className="sender-name">{senderName}</span>}
                         <p>{message.text}</p>
+                        {message.attachments?.map((attachment) => (
+                          <img key={attachment} className="message-image" src={attachment} alt="Shared attachment" />
+                        ))}
                         <time>{formatMessageTime(message.createdAt)}</time>
                       </div>
                     </div>
@@ -277,7 +337,8 @@ function App() {
               </div>
 
               <form className="composer" onSubmit={handleSend}>
-                <button type="button" className="tool-button">＋</button>
+                <button type="button" className="tool-button" onClick={() => imageInputRef.current?.click()} title="Attach an image">＋</button>
+                <input ref={imageInputRef} className="visually-hidden" type="file" accept="image/*" onChange={handleImageSelected} />
                 <textarea
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
@@ -291,9 +352,12 @@ function App() {
                   rows="1"
                   disabled={sending}
                 />
-                <button type="submit" className="send-button" disabled={sending}>
+                <button type="submit" className="send-button" disabled={sending || (!draft.trim() && !selectedImage)}>
                   {sending ? 'Sending...' : 'Send'}
                 </button>
+                {selectedImage && <span className="attachment-name">{selectedImage.name}</span>}
+                {uploadingAvatar && <span className="upload-status">Updating photo...</span>}
+                {uploadError && <span className="upload-error">{uploadError}</span>}
               </form>
             </>
           ) : (
