@@ -26,7 +26,9 @@ app.get('/', (req, res) => {
 
 const connectDB = async () => {
   try {
-    await mongoose.connect(DB_URL);
+    await mongoose.connect(DB_URL, {
+      serverSelectionTimeoutMS: 5000,
+    });
     console.log('MongoDB connected successfully');
     await seedDatabase();
   } catch (error) {

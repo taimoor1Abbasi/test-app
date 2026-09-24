@@ -22,6 +22,23 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    title: {
+      type: String,
+      default: 'Team Member',
+    },
+    bio: {
+      type: String,
+      default: 'Hey there! I am using this messaging app.',
+    },
+    phone: {
+      type: String,
+      default: '',
+    },
+    status: {
+      type: String,
+      enum: ['online', 'away', 'busy', 'offline'],
+      default: 'online',
+    },
   },
   {
     timestamps: true,
@@ -32,4 +49,3 @@ const userSchema = new mongoose.Schema(
 const User = mongoose.model('User', userSchema);
 
 export default User;
-

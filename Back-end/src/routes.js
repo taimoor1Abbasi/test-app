@@ -28,17 +28,22 @@ const upload = multer({
   storage,
   limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
   fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowedExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp'];
+    if (file.mimetype.startsWith('image/') || allowedExts.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('Only image files are allowed!'), false);
+      cb(new Error('Only image files (JPEG, PNG, GIF, WebP, SVG) are allowed!'), false);
     }
   },
 });
 
 // POST upload single image (for chat attachments or profile pictures)
-router.post('/upload', upload.single('image'), (req, res) => {
-  try {
+router.post('/upload', (req, res) => {
+  upload.single('image')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message });
+    }
     if (!req.file) {
       return res.status(400).json({ error: 'No image file uploaded' });
     }
@@ -49,6 +54,42 @@ router.post('/upload', upload.single('image'), (req, res) => {
       originalName: req.file.originalname,
       size: req.file.size,
     });
+  });
+});
+
+// GET user profile by ID
+router.get('/users/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId).select('-passwordHash');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/users/:userId - update user profile (name, title, bio, phone, status, avatarUrl)
+router.put('/users/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { name, title, bio, phone, status, avatarUrl } = req.body;
+
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (title !== undefined) updateData.title = title;
+    if (bio !== undefined) updateData.bio = bio;
+    if (phone !== undefined) updateData.phone = phone;
+    if (status !== undefined) updateData.status = status;
+    if (avatarUrl !== undefined) updateData.avatarUrl = avatarUrl;
+
+    const user = await User.findByIdAndUpdate(userId, updateData, { new: true }).select('-passwordHash');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -117,7 +158,7 @@ router.get('/conversations', async (req, res) => {
     const filter = userId ? { participants: userId } : {};
 
     const conversations = await Conversation.find(filter)
-      .populate('participants', 'name email avatarUrl')
+      .populate('participants', 'name email avatarUrl title bio phone status')
       .populate({
         path: 'lastMessageId',
         select: 'text createdAt senderId attachments',
@@ -143,7 +184,7 @@ router.post('/conversations', async (req, res) => {
     if (type === 'direct' && participants.length === 2) {
       const directKey = Conversation.generateDirectKey(participants[0], participants[1]);
       let conversation = await Conversation.findOne({ directKey })
-        .populate('participants', 'name email avatarUrl')
+        .populate('participants', 'name email avatarUrl title bio phone status')
         .populate('lastMessageId');
 
       if (conversation) {
@@ -156,7 +197,7 @@ router.post('/conversations', async (req, res) => {
         directKey,
       });
 
-      const populated = await conversation.populate('participants', 'name email avatarUrl');
+      const populated = await conversation.populate('participants', 'name email avatarUrl title bio phone status');
       return res.status(201).json(populated);
     }
 
@@ -165,7 +206,7 @@ router.post('/conversations', async (req, res) => {
       participants,
     });
 
-    const populated = await conversation.populate('participants', 'name email avatarUrl');
+    const populated = await conversation.populate('participants', 'name email avatarUrl title bio phone status');
     res.status(201).json(populated);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -178,7 +219,7 @@ router.get('/conversations/:conversationId/messages', async (req, res) => {
     const { conversationId } = req.params;
 
     const messages = await Message.find({ conversationId })
-      .populate('senderId', 'name email avatarUrl')
+      .populate('senderId', 'name email avatarUrl title bio status')
       .populate('readBy', 'name')
       .sort({ createdAt: 1 });
 
@@ -212,7 +253,7 @@ router.post('/messages', async (req, res) => {
       lastMessageAt: message.createdAt,
     });
 
-    const populated = await message.populate('senderId', 'name email avatarUrl');
+    const populated = await message.populate('senderId', 'name email avatarUrl title bio status');
     res.status(201).json(populated);
   } catch (error) {
     res.status(500).json({ error: error.message });
